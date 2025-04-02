@@ -50,6 +50,7 @@ mozliwe_dostawy = {
     'Z2': {'Styczen': 1400, 'Luty': 900, 'Marzec': 1200}
 }
 
+ilosc_przydzielonego_zasobu = pl.LpVariable.dicts("Ilosc_przydzielonego_zasobu", ((zasob, komponent, miesiac) for zasob in zasoby_produkcyjne for komponent in komponenty for miesiac in miesiace), lowBound=0, cat='Integer')
 ilosc_wyprodukowanego_komponentu = pl.LpVariable.dicts("Ilosc_wyprodukowanego_komponentu", ((komponent, miesiac) for komponent in komponenty for miesiac in miesiace), lowBound=0, cat='Integer')
 ilosc_skladowanego_komonentu = pl.LpVariable.dicts("Ilosc_skladowanego_komponentu", ((komponent, miesiac) for komponent in komponenty for miesiac in miesiace), lowBound=0, cat='Integer')
 miesieczny_koszt_skladowanego_komponentu = pl.LpVariable.dicts("Koszt_skladowania_komponentu", ((komponent, miesiac) for komponent in komponenty for miesiac in miesiace), lowBound=0)
@@ -59,18 +60,33 @@ koszt_calkowity = pl.LpVariable("Koszty_calkowite", lowBound=0)
 model = pl.LpProblem("Minimalizacja_kosztow", pl.LpMinimize)
 
 for komponent in komponenty:
-    for i, miesiac in enumerate(miesiace):
-        model += ilosc_skladowanego_komonentu[komponent, 'Styczen'] == ilosc_wyprodukowanego_komponentu[komponent, 'Styczen']
-        if miesiac != 'Styczen':
-            model += ilosc_skladowanego_komonentu[komponent, miesiac] == ilosc_skladowanego_komonentu[komponent, miesiace[i-1]] + ilosc_wyprodukowanego_komponentu[komponent, miesiac]
-        model += miesieczny_koszt_skladowanego_komponentu[komponent, miesiac] >= (ilosc_skladowanego_komonentu[komponent, miesiac] - 150.0) * 0.15 * koszty_produkcji[komponent][miesiac]
-        model += miesieczny_koszt_produkcji_komponentu[komponent, miesiac] >= ilosc_wyprodukowanego_komponentu[komponent, miesiac] * koszty_produkcji[komponent][miesiac]
-    
-    model += ilosc_skladowanego_komonentu[komponent, 'Marzec'] >= realizacja_umowy[komponent]
+    # Realizacja ograniczenia nr 1: dostawy 1100 sztuk komponentu A i 1200 sztuk komponentu B
+    model += realizacja_umowy[komponent] <= ilosc_skladowanego_komonentu[komponent, 'Luty'] + ilosc_wyprodukowanego_komponentu[komponent, 'Marzec']
 
+    # Realizacja ograniczenia nr 3: składowanie komonentów ze stycznia na luty i z lutego na marzec
+    model += ilosc_skladowanego_komonentu[komponent, 'Styczen'] == ilosc_wyprodukowanego_komponentu[komponent, 'Styczen']
+    model += ilosc_skladowanego_komonentu[komponent, 'Luty'] == ilosc_skladowanego_komonentu[komponent, 'Styczen'] + ilosc_wyprodukowanego_komponentu[komponent, 'Luty']
+
+    for i, miesiac in enumerate(miesiace):
+        # Realizacja ograniczenia nr 4: Każdy komonent składa się z odpowiednich proporcji zasobów produkcyjnych
+        model += miesieczny_koszt_skladowanego_komponentu[komponent, miesiac] >= (ilosc_skladowanego_komonentu[komponent, miesiac] - 150.0) * 0.15 * koszty_produkcji[komponent][miesiac]
+
+        # Realizacja ograniczenia nr 2: uwzględnienie kosztów produkcji za sztukę wyprodukowanego komponentu
+        model += miesieczny_koszt_produkcji_komponentu[komponent, miesiac] >= ilosc_wyprodukowanego_komponentu[komponent, miesiac] * koszty_produkcji[komponent][miesiac]
+        
+        # Realizacja ograniczenia nr 4: Każdy komonent składa się z odpowiednich proporcji zasobów produkcyjnych
+        model += ilosc_wyprodukowanego_komponentu[komponent, miesiac] <= pl.lpSum([zapotrzebowanie_na_sztuke[komponent][zasob] * ilosc_przydzielonego_zasobu[zasob, komponent, miesiac]] for zasob in zasoby_produkcyjne)
+    
+
+for miesiac in miesiace:
+    for zasob in zasoby_produkcyjne:
+        # Realizacja ograniczenia nr 5: suma przydzielonych zasobów dla komonentów musi być mniejsza od możliwych dostaw
+        model += pl.lpSum([ilosc_przydzielonego_zasobu[zasob, komponent, miesiac]] for komponent in komponenty) <= mozliwe_dostawy[zasob][miesiac]
+    
 
 # TODO zapotrzebowanie
-model += ilosc_wyprodukowanego_komponentu >= zapotrzebowanie_na_sztuke[komponent]
+
+
 
 model += koszt_calkowity >= pl.lpSum([(miesieczny_koszt_produkcji_komponentu[komponent, miesiac] + miesieczny_koszt_skladowanego_komponentu[komponent, miesiac]) for komponent in komponenty for miesiac in miesiace])
 model += koszt_calkowity, "Koszt_calkowity"
